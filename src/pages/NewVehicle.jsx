@@ -111,6 +111,7 @@ export default function NewVehicle({ session }) {
                 <input
                   id="phone"
                   value={customer.phone}
+                  maxLength={30}
                   onChange={(e) => {
                     setLookupDone(false);
                     setCustomer((c) => ({ ...c, id: null, phone: e.target.value }));
@@ -140,6 +141,7 @@ export default function NewVehicle({ session }) {
                       value={customer.name}
                       onChange={(e) => setCustomer((c) => ({ ...c, name: e.target.value }))}
                       required
+                      maxLength={200}
                       disabled={Boolean(customer.id)}
                     />
                   </div>
@@ -150,6 +152,7 @@ export default function NewVehicle({ session }) {
                       type="email"
                       value={customer.email}
                       onChange={(e) => setCustomer((c) => ({ ...c, email: e.target.value }))}
+                      maxLength={254}
                       disabled={Boolean(customer.id)}
                     />
                   </div>
@@ -169,6 +172,7 @@ export default function NewVehicle({ session }) {
                 value={vehicle.make}
                 onChange={(e) => setVehicle((v) => ({ ...v, make: e.target.value }))}
                 placeholder="Toyota"
+                maxLength={60}
                 required
               />
             </div>
@@ -179,6 +183,7 @@ export default function NewVehicle({ session }) {
                 value={vehicle.model}
                 onChange={(e) => setVehicle((v) => ({ ...v, model: e.target.value }))}
                 placeholder="Corolla"
+                maxLength={60}
                 required
               />
             </div>
@@ -191,6 +196,7 @@ export default function NewVehicle({ session }) {
                 value={vehicle.year}
                 onChange={(e) => setVehicle((v) => ({ ...v, year: e.target.value }))}
                 placeholder="2016"
+                maxLength={4}
               />
             </div>
             <div className="field">
@@ -200,6 +206,7 @@ export default function NewVehicle({ session }) {
                 value={vehicle.color}
                 onChange={(e) => setVehicle((v) => ({ ...v, color: e.target.value }))}
                 placeholder="Silver"
+                maxLength={40}
               />
             </div>
           </div>
@@ -210,6 +217,7 @@ export default function NewVehicle({ session }) {
               value={vehicle.plateNumber}
               onChange={(e) => setVehicle((v) => ({ ...v, plateNumber: e.target.value }))}
               placeholder="GT 1234-24"
+              maxLength={20}
             />
           </div>
           <div className="field">
@@ -220,6 +228,7 @@ export default function NewVehicle({ session }) {
               value={vehicle.notes}
               onChange={(e) => setVehicle((v) => ({ ...v, notes: e.target.value }))}
               placeholder="Reported issue, mileage, anything worth logging at drop-off"
+              maxLength={2000}
             />
           </div>
         </div>

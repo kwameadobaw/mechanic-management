@@ -2,6 +2,43 @@ import { supabase } from "./supabaseClient";
 import { generateTrackingCode, stripFormatting } from "./codeGenerator";
 
 // ---------------------------------------------------------------
+// Error handling: never let raw Postgres/PostgREST error text reach
+// the UI. Internals like constraint names, table/column names, or
+// "row-level security" wording are useful to an attacker probing the
+// schema and meaningless to a shop owner. Map known, safe cases to
+// plain language and fall back to a generic message for everything
+// else.
+// ---------------------------------------------------------------
+function friendlyMessage(error, fallback = "Something went wrong. Please try again.") {
+  const message = error?.message || "";
+
+  if (/already registered/i.test(message)) return "An account with that email already exists.";
+  if (/invalid login credentials/i.test(message)) return "Incorrect email or password.";
+  if (/email not confirmed/i.test(message)) return "Please confirm your email before logging in.";
+  if (/rate limit/i.test(message)) return "Too many attempts. Please wait a moment and try again.";
+  if (error?.code === "23505" || /duplicate key/i.test(message)) return "That record already exists.";
+  if (/password/i.test(message)) return message; // Supabase's own password-policy messages are safe to show as-is.
+
+  // Anything that looks like it's leaking schema/internals gets swapped
+  // for the generic fallback instead of being shown to the user.
+  if (
+    error?.code ||
+    /relation|column|constraint|permission denied|row-level security|policy/i.test(message)
+  ) {
+    return fallback;
+  }
+
+  return message || fallback;
+}
+
+function throwFriendly(error, fallback) {
+  if (!error) return;
+  const wrapped = new Error(friendlyMessage(error, fallback));
+  wrapped.cause = error;
+  throw wrapped;
+}
+
+// ---------------------------------------------------------------
 // Auth (shop admin)
 // ---------------------------------------------------------------
 export async function signUpShop({ email, password, shopName }) {
@@ -10,25 +47,60 @@ export async function signUpShop({ email, password, shopName }) {
     password,
     options: { data: { shop_name: shopName } },
   });
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
 export async function signInShop({ email, password }) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
 export async function signOutShop() {
   const { error } = await supabase.auth.signOut();
-  if (error) throw error;
+  throwFriendly(error);
 }
 
 export async function getSession() {
   const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
+  throwFriendly(error);
   return data.session;
+}
+
+export async function requestPasswordReset(email) {
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/admin/reset-password`,
+  });
+  throwFriendly(error);
+}
+
+export async function updatePassword(newPassword) {
+  const { data, error } = await supabase.auth.updateUser({ password: newPassword });
+  throwFriendly(error);
+  return data;
+}
+
+// ---------------------------------------------------------------
+// Shop profile (stored in the public `shops` table, not just auth
+// metadata, so it's visible and manageable directly in Supabase's
+// table editor)
+// ---------------------------------------------------------------
+export async function getShopProfile(shopId) {
+  const { data, error } = await supabase.from("shops").select("*").eq("id", shopId).single();
+  throwFriendly(error);
+  return data;
+}
+
+export async function updateShopProfile({ shopId, name, phone, address }) {
+  const { data, error } = await supabase
+    .from("shops")
+    .update({ name, phone, address })
+    .eq("id", shopId)
+    .select()
+    .single();
+  throwFriendly(error);
+  return data;
 }
 
 // ---------------------------------------------------------------
@@ -42,19 +114,33 @@ export async function findCustomerByPhone(phone) {
     .eq("phone", phone)
     .limit(1)
     .maybeSingle();
-  if (error) throw error;
+  throwFriendly(error);
   return data;
+}
+
+// Strips characters that are meaningful to PostgREST's filter syntax
+// (commas separate OR conditions, parentheses group them) so a typed
+// search term can't be used to tack on extra filter clauses, and
+// escapes SQL LIKE wildcards so `%`/`_` match literally rather than
+// as wildcards.
+function sanitizeSearchTerm(term) {
+  return term
+    .replace(/[,()]/g, "")
+    .replace(/[%_]/g, "\\$&")
+    .slice(0, 100);
 }
 
 export async function searchCustomers(query) {
   if (!query) return [];
+  const safe = sanitizeSearchTerm(query);
+  if (!safe) return [];
   const { data, error } = await supabase
     .from("customers")
     .select("*")
-    .or(`name.ilike.%${query}%,phone.ilike.%${query}%,email.ilike.%${query}%`)
+    .or(`name.ilike.%${safe}%,phone.ilike.%${safe}%,email.ilike.%${safe}%`)
     .order("created_at", { ascending: false })
     .limit(10);
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
@@ -64,7 +150,7 @@ export async function createCustomer({ shopId, name, phone, email }) {
     .insert({ shop_id: shopId, name, phone, email })
     .select()
     .single();
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
@@ -78,7 +164,7 @@ export async function listVehicles({ status } = {}) {
     .order("created_at", { ascending: false });
   if (status) query = query.eq("status", status);
   const { data, error } = await query;
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
@@ -88,7 +174,7 @@ export async function getVehicle(id) {
     .select("*, customers(name, phone, email)")
     .eq("id", id)
     .single();
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
@@ -115,8 +201,8 @@ export async function createVehicle({ shopId, customerId, make, model, year, pla
       .single();
 
     if (!error) return data;
-    // 23505 = unique_violation; retry with a new code. Anything else, bail.
-    if (error.code !== "23505") throw error;
+    // 23505 = unique_violation on access_code; retry with a new code.
+    if (error.code !== "23505") throwFriendly(error);
   }
   throw new Error("Could not generate a unique tracking code. Please try again.");
 }
@@ -128,7 +214,7 @@ export async function markVehicleRepaired(vehicleId) {
     .eq("id", vehicleId)
     .select()
     .single();
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
@@ -139,7 +225,7 @@ export async function reopenVehicle(vehicleId) {
     .eq("id", vehicleId)
     .select()
     .single();
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
@@ -152,17 +238,20 @@ export async function listUpdatesForVehicle(vehicleId) {
     .select("*")
     .eq("vehicle_id", vehicleId)
     .order("created_at", { ascending: true });
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
 export async function postUpdate({ vehicleId, message, createdBy }) {
   const { data, error } = await supabase
     .from("updates")
+    // created_by also defaults to auth.uid() at the database level
+    // (see schema_v3_security.sql) — passing it here too keeps this
+    // working the same way before and after that migration is applied.
     .insert({ vehicle_id: vehicleId, message, created_by: createdBy })
     .select()
     .single();
-  if (error) throw error;
+  throwFriendly(error);
   return data;
 }
 
@@ -172,13 +261,13 @@ export async function postUpdate({ vehicleId, message, createdBy }) {
 export async function fetchVehicleByCode(rawCode) {
   const code = stripFormatting(rawCode);
   const { data, error } = await supabase.rpc("get_vehicle_by_code", { p_code: code });
-  if (error) throw error;
+  throwFriendly(error, "Couldn't look that up right now. Please try again.");
   return data?.[0] ?? null;
 }
 
 export async function fetchUpdatesByCode(rawCode) {
   const code = stripFormatting(rawCode);
   const { data, error } = await supabase.rpc("get_updates_by_code", { p_code: code });
-  if (error) throw error;
+  throwFriendly(error, "Couldn't look that up right now. Please try again.");
   return data ?? [];
 }

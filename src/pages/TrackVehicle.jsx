@@ -18,9 +18,17 @@ export default function TrackVehicle() {
   const [updates, setUpdates] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
 
   async function handleSubmit(e) {
     e.preventDefault();
+
+    const now = Date.now();
+    if (now < cooldownUntil) {
+      setError("Please wait a moment before trying again.");
+      return;
+    }
+
     const clean = stripFormatting(code);
     if (clean.length !== 16) {
       setError("Tracking codes are 16 characters — double-check the code on your ticket.");
@@ -33,6 +41,10 @@ export default function TrackVehicle() {
       const v = await fetchVehicleByCode(clean);
       if (!v) {
         setError("No vehicle found for that code. Check with the shop if you think this is wrong.");
+        // A short cooldown after a miss costs a genuine typo almost
+        // nothing, while making scripted guessing through many codes
+        // meaningfully slower.
+        setCooldownUntil(Date.now() + 2000);
         return;
       }
       const u = await fetchUpdatesByCode(clean);
@@ -40,6 +52,7 @@ export default function TrackVehicle() {
       setUpdates(u);
     } catch (err) {
       setError(err.message || "Something went wrong looking that up.");
+      setCooldownUntil(Date.now() + 2000);
     } finally {
       setLoading(false);
     }
@@ -59,6 +72,7 @@ export default function TrackVehicle() {
             onChange={(e) => setCode(e.target.value)}
             placeholder="AB3D-EF7H-JK2M-NPQR"
             style={{ fontFamily: "var(--font-mono)", letterSpacing: "0.04em" }}
+            maxLength={24}
             autoFocus
           />
         </div>

@@ -22,6 +22,9 @@ export default function Navbar({ session }) {
           {session ? (
             <>
               <span className="nav-meta">{shopName}</span>
+              <Link to="/admin/settings" className="btn btn-ghost">
+                Shop settings
+              </Link>
               <button className="btn btn-secondary" onClick={handleSignOut}>
                 Sign out
               </button>

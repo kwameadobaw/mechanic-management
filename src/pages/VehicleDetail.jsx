@@ -135,6 +135,7 @@ export default function VehicleDetail({ session }) {
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder="Diagnosed a worn timing belt, ordering the part now."
+                  maxLength={4000}
                 />
               </div>
               <button className="btn btn-primary" type="submit" disabled={posting || !message.trim()}>
